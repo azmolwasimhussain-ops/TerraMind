@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: 'Fraunces', Georgia, serif;
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  :root {
+    --font-serif: 'Fraunces', Georgia, serif;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  /* Editorial fluid font scaling across mobile, tablet, and desktop breakpoints */
+  html {
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  @media (min-width: 640px) {
+    html {
+      font-size: 16.5px;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    html {
+      font-size: 17px;
+    }
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #f7faf7;
+    color: #1a3328;
+    line-height: 1.68;
+    letter-spacing: -0.011em;
+  }
+
+  /* Apply Fraunces serif font to all primary headings with optical sizing and ligature support */
+  h1, h2, h3, h4, h5, h6,
+  .font-serif,
+  .font-serif-nature,
+  .font-heading {
+    font-family: 'Fraunces', Georgia, serif !important;
+    font-feature-settings: 'opsz' 36, 'liga' 1;
+    color: #0f291e;
+  }
+
+  h1 {
+    letter-spacing: -0.025em;
+    line-height: 1.12;
+  }
+
+  h2 {
+    letter-spacing: -0.02em;
+    line-height: 1.22;
+  }
+
+  h3 {
+    letter-spacing: -0.015em;
+    line-height: 1.28;
+  }
+
+  h4 {
+    letter-spacing: -0.01em;
+    line-height: 1.35;
+  }
+
+  p {
+    line-height: 1.72;
+    letter-spacing: -0.006em;
+  }
+
+  /* Custom focus visible rings for strict keyboard accessibility */
+  :focus-visible {
+    outline: 2px solid #1b5e46;
+    outline-offset: 2px;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom quiet scrollbar for light nature feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f0f4f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c2d6ca;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9abfa9;
+}
