@@ -1,0 +1,8 @@
+{
+  "name": "TerraMind — Your Offline AI Nature Companion",
+  "description": "AI-powered nature exploration app for Hacktoberfest 2026 'Touch Grass'. Generates personalized outdoor missions, distraction-free screen-off exploration, and private local IndexedDB nature journaling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
