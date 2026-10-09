@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#041f17" />
+      <stop offset="100%" stop-color="#02140f" />
+    </linearGradient>
+    <linearGradient id="leafGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="stemGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a7f3d0" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)" />
+  <circle cx="256" cy="256" r="210" stroke="#064e3b" stroke-width="8" stroke-dasharray="12 16" />
+  <circle cx="256" cy="256" r="180" stroke="#047857" stroke-width="3" opacity="0.6" />
+  <!-- Compass marks -->
+  <path d="M256 90 L256 115 M256 397 L256 422 M90 256 L115 256 M397 256 L422 256" stroke="#34d399" stroke-width="4" stroke-linecap="round" />
+  <!-- Botanical Leaf / Sprout Center -->
+  <path d="M256 360 C256 360 210 300 210 240 C210 170 256 140 256 140 C256 140 302 170 302 240 C302 300 256 360 256 360 Z" fill="url(#leafGrad)" />
+  <path d="M256 360 C256 320 256 220 256 150" stroke="url(#stemGrad)" stroke-width="5" stroke-linecap="round" />
+  <path d="M256 260 C280 240 290 220 290 220" stroke="#a7f3d0" stroke-width="3" stroke-linecap="round" opacity="0.8" />
+  <path d="M256 290 C232 270 222 250 222 250" stroke="#a7f3d0" stroke-width="3" stroke-linecap="round" opacity="0.8" />
+</svg>
