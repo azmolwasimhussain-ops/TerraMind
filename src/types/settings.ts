@@ -26,3 +26,27 @@ export const DEFAULT_SETTINGS: AppSettings = {
   prefersReducedMotion: false,
   screenFreeVoiceChime: true,
 };
+
+/**
+ * Returns environment-aware default settings:
+ * In local dev -> 'proxy' mode targeting http://localhost:11434.
+ * In cloud deployment (Vercel) -> 'offline_demo' mode (Offline Botanical Engine)
+ * so cloud users immediately have a functioning, zero-error experience.
+ */
+export function getDefaultSettings(): AppSettings {
+  const isCloud =
+    typeof window !== 'undefined'
+      ? window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1' &&
+        window.location.hostname !== '0.0.0.0' &&
+        window.location.hostname !== '[::1]' &&
+        !window.location.hostname.endsWith('.local')
+      : process.env.VERCEL === '1' ||
+        process.env.NODE_ENV === 'production' ||
+        !!process.env.K_SERVICE;
+
+  return {
+    ...DEFAULT_SETTINGS,
+    connectionMode: isCloud ? 'offline_demo' : 'proxy',
+  };
+}

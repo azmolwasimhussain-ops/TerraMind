@@ -31,7 +31,7 @@ import {
   fetchOllamaModels,
   matchesModelName,
 } from '../services/ollamaClient';
-import { getAppEnvironment } from '../services/environment';
+import { getAppEnvironment, shouldAutoFallbackToOffline } from '../services/environment';
 
 const AVAILABLE_INTERESTS: { id: NatureInterest; label: string; icon: string }[] = [
   { id: 'Birdwatching', label: 'Birdwatching', icon: '🪶' },
@@ -72,9 +72,20 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
     'Mindfulness',
   ]);
   const [locationHint, setLocationHint] = useState<string>('');
+
+  // Auto-select offline engine when deployed to cloud with a localhost Ollama URL
+  // (cloud servers cannot reach localhost:11434 on the user's Mac)
+  const isCloudLocalhostMismatch = shouldAutoFallbackToOffline(settings.ollamaBaseUrl);
   const [useOfflineEngineOverride, setUseOfflineEngineOverride] = useState<boolean>(
-    settings.connectionMode === 'offline_demo'
+    settings.connectionMode === 'offline_demo' || isCloudLocalhostMismatch
   );
+
+  // Keep override in sync if settings change (e.g. user pastes ngrok URL)
+  useEffect(() => {
+    if (shouldAutoFallbackToOffline(settings.ollamaBaseUrl)) {
+      setUseOfflineEngineOverride(true);
+    }
+  }, [settings.ollamaBaseUrl, settings.connectionMode]);
 
   // Status State
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -214,10 +225,12 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
             </div>
             <p className="text-[11px] text-[#5c806f]">
               {useOfflineEngineOverride
-                ? 'Instant rule-based naturalist generator. Requires zero daemons or connections.'
-                : env.isCloudPreview && isLocalhostTarget
-                ? 'Cloud preview detected: localhost:11434 points to this cloud instance, not your Mac.'
-                : `Targeting ${settings.ollamaBaseUrl}`}
+                ? isCloudLocalhostMismatch
+                  ? 'Auto-selected for cloud deployment (cloud instances cannot reach localhost:11434 on your Mac).'
+                  : 'Instant rule-based naturalist generator. Requires zero daemons or connections.'
+                : isCloudLocalhostMismatch
+                  ? `Targeting ${settings.ollamaBaseUrl}. Note: Cloud deployments cannot reach localhost without a tunnel.`
+                  : `Targeting ${settings.ollamaBaseUrl}`}
             </p>
           </div>
         </div>
@@ -395,7 +408,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
 
         {/* Right Column: Results & Previews (lg:col-span-5) */}
         <div className="lg:col-span-5 space-y-6">
-          {/* Diagnostic Error Notice with 1-click fallback */}
+          {/* Diagnostic Error Notice */}
           {error && (
             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6 text-amber-950 space-y-4 shadow-sm animate-fade-in">
               <div className="flex items-start gap-3">
@@ -412,32 +425,32 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
                       💡 {error.hint}
                     </p>
                   )}
-
-                  {/* Cloud preview explanation */}
-                  {env.isCloudPreview && isLocalhostTarget && (
-                    <div className="text-[11px] text-amber-800 border-t border-amber-200/70 pt-2 flex items-start gap-1.5">
-                      <Globe className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-700" />
-                      <span>
-                        <strong>Cloud Preview Environment:</strong> TerraMind is hosted on Google AI Studio Cloud Run. Because the backend runs in a remote container, it cannot access <code>http://localhost:11434</code> on your physical machine without a tunnel (e.g. ngrok).
-                      </span>
-                    </div>
+                  {error.preview && (
+                    <p className="text-[11px] text-amber-800 font-mono bg-amber-100/80 p-2 rounded border border-amber-200">
+                      Response preview: {error.preview}
+                    </p>
                   )}
                 </div>
               </div>
 
               <div className="pt-2 border-t border-amber-200 flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleGenerate(false)}
-                  className="w-full text-center rounded-xl bg-amber-600/90 py-2.5 text-xs font-semibold text-white hover:bg-amber-700 transition shadow-xs flex items-center justify-center gap-1.5"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  <span>Retry with Local Ollama</span>
-                </button>
+                {!useOfflineEngineOverride && !isCloudLocalhostMismatch && (
+                  <button
+                    type="button"
+                    onClick={() => handleGenerate(false)}
+                    className="w-full text-center rounded-xl bg-amber-600/90 py-2.5 text-xs font-semibold text-white hover:bg-amber-700 transition shadow-xs flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Retry with Local Ollama</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
-                  onClick={() => handleGenerate(true)}
+                  onClick={() => {
+                    setUseOfflineEngineOverride(true);
+                    handleGenerate(true);
+                  }}
                   className="w-full text-center rounded-xl bg-[#1b5e46] py-3 text-xs font-bold text-white hover:bg-[#134835] transition shadow-sm flex items-center justify-center gap-1.5"
                 >
                   <Sparkles className="h-3.5 w-3.5" />

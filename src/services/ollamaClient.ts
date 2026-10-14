@@ -1,6 +1,10 @@
 import { MissionGeneratorParams, OutdoorMission, EnergyLevel } from '../types/mission';
 import { OllamaConnectionMode, OllamaModelInfo } from '../types/settings';
-import { normalizeOllamaUrl } from './environment';
+import {
+  normalizeOllamaUrl,
+  shouldAutoFallbackToOffline,
+  getAppEnvironment,
+} from './environment';
 
 export interface OllamaTestResult {
   ok: boolean;
@@ -98,14 +102,27 @@ export async function testOllamaConnection(
     };
   }
 
+  // Cloud deployment targeting localhost cannot reach user's computer
+  if (shouldAutoFallbackToOffline(cleanUrl)) {
+    return {
+      ok: false,
+      error: 'Cloud deployment cannot reach local Ollama at localhost:11434.',
+      hint: 'Cloud hosts cannot access localhost on your personal machine. Switch to the Offline Botanical Engine or configure a public tunnel URL (e.g. ngrok http 11434) in Settings.',
+      latencyMs: 0,
+    };
+  }
+
   try {
+    const isCloud = getAppEnvironment().isCloudDeployment;
+    const effectiveMode: OllamaConnectionMode = isCloud ? 'direct' : mode;
+
     const targetApi =
-      mode === 'proxy'
+      effectiveMode === 'proxy'
         ? `/api/ollama/version?url=${encodeURIComponent(cleanUrl)}`
         : `${cleanUrl}/api/version`;
 
     const headers: Record<string, string> = {};
-    if (mode === 'proxy') {
+    if (effectiveMode === 'proxy') {
       headers['x-ollama-url'] = cleanUrl;
     }
 
@@ -126,18 +143,27 @@ export async function testOllamaConnection(
         headers,
         signal: controller.signal,
       },
-      `Ollama version check (${mode})`
+      `Ollama version check (${effectiveMode})`
     );
     clearTimeout(timeout);
 
     const latencyMs = Math.round(performance.now() - startTime);
+
+    if (result.status === 405) {
+      return {
+        ok: false,
+        error: 'Endpoint returned HTTP 405 (Method Not Allowed).',
+        hint: 'The server endpoint does not accept this request. In cloud deployments, use the Offline Botanical Engine or configure a public HTTPS tunnel in Settings.',
+        latencyMs,
+      };
+    }
 
     if (!result.contentType.includes('application/json')) {
       const preview = (result.rawText || '').slice(0, 150);
       return {
         ok: false,
         error: `Expected JSON but received HTTP ${result.status}. Response preview: ${preview}`,
-        hint: 'The configured URL returned an HTML webpage instead of Ollama JSON. Check your settings.',
+        hint: 'The configured URL returned an HTML webpage instead of Ollama JSON. Check your settings or use the Offline Botanical Engine.',
         latencyMs,
       };
     }
@@ -185,15 +211,23 @@ export async function fetchOllamaModels(
     return [{ name: 'offline-botanical-heuristic-v2.4' }];
   }
 
+  // Cloud deployment targeting localhost cannot reach user's computer; avoid failing network calls
+  if (shouldAutoFallbackToOffline(baseUrl)) {
+    return [];
+  }
+
   try {
     const cleanUrl = normalizeOllamaUrl(baseUrl);
+    const isCloud = getAppEnvironment().isCloudDeployment;
+    const effectiveMode: OllamaConnectionMode = isCloud ? 'direct' : mode;
+
     const targetApi =
-      mode === 'proxy'
+      effectiveMode === 'proxy'
         ? `/api/ollama/tags?url=${encodeURIComponent(cleanUrl)}`
         : `${cleanUrl}/api/tags`;
 
     const headers: Record<string, string> = {};
-    if (mode === 'proxy') {
+    if (effectiveMode === 'proxy') {
       headers['x-ollama-url'] = cleanUrl;
     }
 
@@ -207,7 +241,7 @@ export async function fetchOllamaModels(
         headers,
         signal: controller.signal,
       },
-      `Ollama tags check (${mode})`
+      `Ollama tags check (${effectiveMode})`
     );
     clearTimeout(timeout);
 
@@ -297,11 +331,22 @@ You must return valid JSON with this exact structure:
   let rawResponseText = '';
   const cleanUrl = normalizeOllamaUrl(baseUrl);
 
-  const apiUrl = mode === 'proxy' ? '/api/ollama/generate' : `${cleanUrl}/api/generate`;
+  // Cloud deployment targeting localhost cannot reach user's computer
+  if (shouldAutoFallbackToOffline(baseUrl)) {
+    throw new OllamaError(
+      'Cloud deployment cannot connect to Ollama at localhost:11434.',
+      'UNREACHABLE',
+      'Cloud servers cannot reach your computer\'s localhost without a tunnel. Switch to the Offline Botanical Engine or configure a public HTTPS tunnel URL (e.g. ngrok) in Settings.'
+    );
+  }
+
+  const isCloud = getAppEnvironment().isCloudDeployment;
+  const effectiveMode: OllamaConnectionMode = isCloud ? 'direct' : mode;
+  const apiUrl = effectiveMode === 'proxy' ? '/api/ollama/generate' : `${cleanUrl}/api/generate`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (mode === 'proxy') {
+  if (effectiveMode === 'proxy') {
     headers['x-ollama-url'] = cleanUrl;
   }
 
@@ -325,7 +370,7 @@ You must return valid JSON with this exact structure:
         }),
         signal: controller.signal,
       },
-      `Ollama generate (${mode})`
+      `Ollama generate (${effectiveMode})`
     );
   } catch (err: any) {
     if (err.name === 'AbortError') {
@@ -340,13 +385,23 @@ You must return valid JSON with this exact structure:
     clearTimeout(timeout);
   }
 
-  // 1. Guard against HTML or non-JSON responses (Prevents "Unexpected token '<'")
+  // 1. Guard against HTTP 405 Method Not Allowed
+  if (fetchResult.status === 405) {
+    throw new OllamaError(
+      'Ollama endpoint returned HTTP 405 (Method Not Allowed).',
+      'UNREACHABLE',
+      'In cloud deployments, the local proxy is not available. Switch to the Offline Botanical Engine or configure a public HTTPS tunnel URL in Settings.',
+      fetchResult.rawText?.slice(0, 200)
+    );
+  }
+
+  // 2. Guard against HTML or non-JSON responses (Prevents "Unexpected token '<'")
   if (!fetchResult.contentType.includes('application/json')) {
     const preview = (fetchResult.rawText || '').slice(0, 200);
     throw new OllamaError(
-      `Expected JSON but received HTTP ${fetchResult.status}. Check the API endpoint and server logs. Response preview: ${preview}`,
+      `Expected JSON but received HTTP ${fetchResult.status}. Response preview: ${preview}`,
       'UNREACHABLE',
-      'The API endpoint returned a webpage instead of JSON. Verify the server proxy or Ollama base URL.',
+      'The API endpoint returned a webpage instead of JSON. Verify the server proxy or Ollama base URL, or switch to the Offline Botanical Engine.',
       preview
     );
   }

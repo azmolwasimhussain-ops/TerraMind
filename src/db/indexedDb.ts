@@ -1,6 +1,6 @@
 import { OutdoorMission } from '../types/mission';
 import { JournalEntry } from '../types/journal';
-import { AppSettings, DEFAULT_SETTINGS } from '../types/settings';
+import { AppSettings, DEFAULT_SETTINGS, getDefaultSettings } from '../types/settings';
 
 const DB_NAME = 'TerraMindDB';
 const DB_VERSION = 1;
@@ -11,7 +11,7 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 const memoryStore = {
   missions: new Map<string, OutdoorMission>(),
   journal: new Map<string, JournalEntry>(),
-  settings: { ...DEFAULT_SETTINGS },
+  settings: getDefaultSettings(),
 };
 
 function hasIndexedDB(): boolean {
@@ -304,18 +304,19 @@ export async function getSettings(): Promise<AppSettings> {
       const store = tx.objectStore('settings');
       const req = store.get('user_settings');
       req.onsuccess = () => {
+        const defaults = getDefaultSettings();
         if (req.result && req.result.value) {
-          const merged = { ...DEFAULT_SETTINGS, ...req.result.value };
+          const merged = { ...defaults, ...req.result.value };
           memoryStore.settings = merged;
           resolve(merged);
         } else {
-          resolve(memoryStore.settings || DEFAULT_SETTINGS);
+          resolve(memoryStore.settings || defaults);
         }
       };
-      req.onerror = () => resolve(memoryStore.settings || DEFAULT_SETTINGS);
+      req.onerror = () => resolve(memoryStore.settings || getDefaultSettings());
     });
   } catch {
-    return memoryStore.settings || DEFAULT_SETTINGS;
+    return memoryStore.settings || getDefaultSettings();
   }
 }
 

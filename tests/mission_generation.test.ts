@@ -5,13 +5,20 @@ import {
   fetchOllamaModels,
   matchesModelName,
   resolveActualModelName,
+  testOllamaConnection,
   OllamaError,
   safeFetchJson,
 } from '../src/services/ollamaClient.js';
 import { generateMission } from '../src/services/aiProvider.js';
 import { MissionGeneratorParams } from '../src/types/mission.js';
 import { DEFAULT_SETTINGS, AppSettings } from '../src/types/settings.js';
-import { normalizeOllamaUrl } from '../src/services/environment.js';
+import {
+  normalizeOllamaUrl,
+  shouldAutoFallbackToOffline,
+  isLocalhostUrl,
+  isUsableCloudOllamaUrl,
+  getAppEnvironment,
+} from '../src/services/environment.js';
 
 const mockParams: MissionGeneratorParams = {
   durationMinutes: 30,
@@ -321,5 +328,166 @@ test('TerraMind Mission Generation Resilience & Diagnostics', async (t) => {
         return true;
       }
     );
+  });
+
+  await t.test('Cloud detection: shouldAutoFallbackToOffline correctly detects cloud vs local and localhost vs tunnel', () => {
+    const localEnv = {
+      isCloudPreview: false,
+      isCloudDeployment: false,
+      hostname: 'localhost',
+      isLocalhost: true,
+      canDirectAccessLocalhost: true,
+    };
+
+    const cloudEnv = {
+      isCloudPreview: true,
+      isCloudDeployment: true,
+      hostname: 'terra-mind-lqvd.vercel.app',
+      isLocalhost: false,
+      canDirectAccessLocalhost: false,
+    };
+
+    // In local dev, localhost:11434 is valid and reachable
+    assert.equal(shouldAutoFallbackToOffline('http://localhost:11434', localEnv), false);
+    assert.equal(shouldAutoFallbackToOffline('http://127.0.0.1:11434', localEnv), false);
+
+    // In cloud deployment (Vercel), localhost:11434 is unreachable -> auto-fallback
+    assert.equal(shouldAutoFallbackToOffline('http://localhost:11434', cloudEnv), true);
+    assert.equal(shouldAutoFallbackToOffline('http://127.0.0.1:11434', cloudEnv), true);
+    assert.equal(shouldAutoFallbackToOffline('', cloudEnv), true);
+
+    // In cloud deployment, a public HTTPS tunnel URL (e.g. ngrok) is allowed
+    assert.equal(shouldAutoFallbackToOffline('https://my-ollama-tunnel.ngrok-free.app', cloudEnv), false);
+    assert.equal(isUsableCloudOllamaUrl('https://my-ollama-tunnel.ngrok-free.app'), true);
+    assert.equal(isUsableCloudOllamaUrl('http://localhost:11434'), false);
+    assert.equal(isLocalhostUrl('http://localhost:11434'), true);
+    assert.equal(isLocalhostUrl('https://my-ollama-tunnel.ngrok-free.app'), false);
+  });
+
+  await t.test('Cloud deployment: generateMission auto-fallbacks to Offline Botanical Engine when Ollama is localhost', async () => {
+    // Intercept fetch to verify NO network requests are made when auto-fallback engages
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      throw new Error('Network should not be called during auto-fallback');
+    };
+
+    // Temporarily set VERCEL=1 to simulate cloud environment in test runner
+    const oldVercel = process.env.VERCEL;
+    process.env.VERCEL = '1';
+
+    try {
+      const cloudSettings: AppSettings = {
+        ...DEFAULT_SETTINGS,
+        ollamaBaseUrl: 'http://localhost:11434',
+        connectionMode: 'proxy',
+      };
+
+      const result = await generateMission(mockParams, cloudSettings);
+
+      assert.equal(fetchCalled, false, 'Should not attempt network calls to unreachable localhost');
+      assert.equal(result.source, 'heuristic_engine');
+      assert.equal(result.modelUsed, 'Offline Botanical Heuristic Engine v2.4 (Cloud Auto-Fallback)');
+      assert.ok(result.mission.title.length > 0);
+      assert.ok(result.mission.instructions.length >= 3);
+    } finally {
+      if (oldVercel !== undefined) {
+        process.env.VERCEL = oldVercel;
+      } else {
+        delete process.env.VERCEL;
+      }
+    }
+  });
+
+  await t.test('Cloud deployment: explicit switch to Ollama throws informative error instead of cryptic 405', async () => {
+    const oldVercel = process.env.VERCEL;
+    process.env.VERCEL = '1';
+
+    try {
+      const cloudSettings: AppSettings = {
+        ...DEFAULT_SETTINGS,
+        ollamaBaseUrl: 'http://localhost:11434',
+      };
+
+      // User explicitly requested Ollama (forceHeuristic === false) while targeting localhost in cloud
+      await assert.rejects(
+        async () => {
+          await generateMission(mockParams, cloudSettings, false);
+        },
+        (err: any) => {
+          assert.ok(err instanceof OllamaError);
+          assert.equal(err.code, 'UNREACHABLE');
+          assert.ok(err.message.includes('Cloud deployment cannot connect directly to Ollama'));
+          assert.ok(err.hint?.includes('Offline Botanical Engine') || err.hint?.includes('ngrok'));
+          return true;
+        }
+      );
+    } finally {
+      if (oldVercel !== undefined) {
+        process.env.VERCEL = oldVercel;
+      } else {
+        delete process.env.VERCEL;
+      }
+    }
+  });
+
+  await t.test('HTTP 405 handling: generateMissionWithOllama formats helpful message on HTTP 405 Method Not Allowed', async () => {
+    globalThis.fetch = async () => {
+      return new Response('<!doctype html><html><body><h1>405 Method Not Allowed</h1></body></html>', {
+        status: 405,
+        headers: { 'Content-Type': 'text/html' },
+      });
+    };
+
+    await assert.rejects(
+      async () => {
+        await generateMissionWithOllama(mockParams, 'http://localhost:11434', 'llama3.2', 'proxy');
+      },
+      (err: any) => {
+        assert.ok(err instanceof OllamaError);
+        assert.equal(err.code, 'UNREACHABLE');
+        assert.ok(err.message.includes('HTTP 405') || err.hint?.includes('Offline Botanical Engine'));
+        return true;
+      }
+    );
+  });
+
+  await t.test('HTTP 405 handling: testOllamaConnection handles HTTP 405 cleanly', async () => {
+    globalThis.fetch = async () => {
+      return new Response('405 Method Not Allowed', {
+        status: 405,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    };
+
+    const result = await testOllamaConnection('http://localhost:11434', 'proxy');
+    assert.equal(result.ok, false);
+    assert.ok(result.error?.includes('405') || result.hint?.includes('Offline Botanical Engine'));
+  });
+
+  await t.test('fetchOllamaModels: returns empty array without network call when on cloud with localhost', async () => {
+    let networkCallMade = false;
+    globalThis.fetch = async () => {
+      networkCallMade = true;
+      return new Response(JSON.stringify({ models: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const oldVercel = process.env.VERCEL;
+    process.env.VERCEL = '1';
+
+    try {
+      const models = await fetchOllamaModels('http://localhost:11434', 'proxy');
+      assert.equal(networkCallMade, false, 'No network call should be made for localhost in cloud');
+      assert.deepEqual(models, []);
+    } finally {
+      if (oldVercel !== undefined) {
+        process.env.VERCEL = oldVercel;
+      } else {
+        delete process.env.VERCEL;
+      }
+    }
   });
 });

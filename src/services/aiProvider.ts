@@ -4,10 +4,10 @@ import {
   generateMissionWithOllama,
   fetchOllamaModels,
   matchesModelName,
-  resolveActualModelName,
   OllamaError,
 } from './ollamaClient';
 import { generateHeuristicMission } from './botanicalEngine';
+import { shouldAutoFallbackToOffline } from './environment';
 
 export interface GenerationResult {
   mission: OutdoorMission;
@@ -17,16 +17,24 @@ export interface GenerationResult {
 
 /**
  * Generate a mission based on user settings and parameters.
- * If fallbackToHeuristic is true (user explicitly chose to fall back upon error),
- * it returns a heuristic mission with transparent provenance.
+ *
+ * Priority order:
+ *  1. forceHeuristic === true OR settings.connectionMode === 'offline_demo'
+ *     → Offline Botanical Engine immediately.
+ *  2. Cloud deployment + localhost Ollama URL (default / unconfigured):
+ *     → If forceHeuristic is undefined, auto-fallback to Offline Botanical Engine immediately.
+ *     → If user explicitly requested Ollama (forceHeuristic === false) on cloud with localhost,
+ *       throw an informative OllamaError with clear explanation and action items.
+ *  3. Local development or cloud with public tunnel URL:
+ *     → Verify installed models via /api/tags and generate with real Ollama.
  */
 export async function generateMission(
   params: MissionGeneratorParams,
   settings: AppSettings,
-  forceHeuristic: boolean = false
+  forceHeuristic?: boolean
 ): Promise<GenerationResult> {
-  // If user configured offline mode or specifically requested heuristic generator
-  if (forceHeuristic || settings.connectionMode === 'offline_demo') {
+  // --- Priority 1: Explicitly offline mode ---
+  if (forceHeuristic === true || settings.connectionMode === 'offline_demo') {
     const mission = generateHeuristicMission(params);
     return {
       mission,
@@ -35,7 +43,30 @@ export async function generateMission(
     };
   }
 
-  // Determine actual model name from Ollama tags if available
+  // --- Priority 2: Cloud deployment with localhost URL ---
+  if (shouldAutoFallbackToOffline(settings.ollamaBaseUrl)) {
+    // When forceHeuristic is undefined (default generation in cloud): auto-fallback seamlessly
+    if (forceHeuristic === undefined) {
+      const mission = generateHeuristicMission(params);
+      return {
+        mission,
+        source: 'heuristic_engine',
+        modelUsed: 'Offline Botanical Heuristic Engine v2.4 (Cloud Auto-Fallback)',
+      };
+    }
+
+    // When user explicitly switched to Ollama (forceHeuristic === false) while targeting localhost:
+    // Inform them clearly instead of failing with an unexpected HTTP 405 error
+    throw new OllamaError(
+      'Cloud deployment cannot connect directly to Ollama at localhost:11434.',
+      'UNREACHABLE',
+      'In cloud deployments (like Vercel), localhost points to the cloud host, not your computer. To use Ollama from the cloud, configure a public tunnel URL (e.g. ngrok http 11434) in Settings, or use the built-in Offline Botanical Engine.'
+    );
+  }
+
+  // --- Priority 3: Real Ollama (local dev or user-supplied public URL) ---
+
+  // Resolve actual installed model name from /api/tags
   let effectiveModel = settings.ollamaModel;
   try {
     const installed = await fetchOllamaModels(
@@ -51,8 +82,10 @@ export async function generateMission(
       if (match) {
         effectiveModel = match.name || match.model || settings.ollamaModel;
       } else {
-        // Model is not among installed models
-        const availableNames = installed.map((m) => m.name || m.model).filter(Boolean).join(', ');
+        const availableNames = installed
+          .map((m) => m.name || m.model)
+          .filter(Boolean)
+          .join(', ');
         throw new OllamaError(
           `Model "${settings.ollamaModel}" not found in Ollama library.`,
           'MODEL_NOT_FOUND',
@@ -64,26 +97,20 @@ export async function generateMission(
     if (err instanceof OllamaError) {
       throw err;
     }
-    // If tags check failed (e.g. network error / daemon offline), proceed to generate call
-    // which will produce the proper UNREACHABLE diagnostic.
+    // Tags check failed (network/daemon offline) — proceed; generate call will surface the real error.
   }
 
-  // Otherwise, use genuine local Ollama with resolved actual model name
-  try {
-    const mission = await generateMissionWithOllama(
-      params,
-      settings.ollamaBaseUrl,
-      effectiveModel,
-      settings.connectionMode
-    );
+  // Generate via Ollama
+  const mission = await generateMissionWithOllama(
+    params,
+    settings.ollamaBaseUrl,
+    effectiveModel,
+    settings.connectionMode
+  );
 
-    return {
-      mission,
-      source: 'ollama',
-      modelUsed: mission.modelUsed || `Ollama (${effectiveModel})`,
-    };
-  } catch (err) {
-    // Re-throw so the UI can accurately present the error and offer offline fallback
-    throw err;
-  }
+  return {
+    mission,
+    source: 'ollama',
+    modelUsed: mission.modelUsed || `Ollama (${effectiveModel})`,
+  };
 }
