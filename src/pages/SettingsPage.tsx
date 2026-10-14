@@ -15,6 +15,8 @@ import { AppSettings, OllamaConnectionMode, OllamaModelInfo } from '../types/set
 import {
   testOllamaConnection,
   fetchOllamaModels,
+  matchesModelName,
+  resolveActualModelName,
   OllamaTestResult,
 } from '../services/ollamaClient';
 import {
@@ -48,6 +50,23 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   useEffect(() => {
     setFormData(settings);
   }, [settings]);
+
+  // Refresh model availability on mount or when URL / mode changes
+  useEffect(() => {
+    let isMounted = true;
+    if (formData.connectionMode !== 'offline_demo') {
+      fetchOllamaModels(formData.ollamaBaseUrl, formData.connectionMode)
+        .then((models) => {
+          if (isMounted && models.length > 0) {
+            setDiscoveredModels(models);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [formData.ollamaBaseUrl, formData.connectionMode]);
 
   const handleFieldChange = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     const updated = { ...formData, [key]: value };
@@ -283,24 +302,109 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 />
               </div>
 
-              {/* Quick model chips */}
+              {/* Validation status against discovered library models */}
+              {discoveredModels.length > 0 && (
+                <div className="text-[11px] pt-0.5">
+                  {discoveredModels.some((m) =>
+                    matchesModelName(formData.ollamaModel, m.name || m.model || '')
+                  ) ? (
+                    <p className="text-emerald-700 flex items-center gap-1 font-medium">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#1b5e46]" />
+                      <span>
+                        Verified in local library:{' '}
+                        <code className="font-bold">
+                          {
+                            discoveredModels.find((m) =>
+                              matchesModelName(formData.ollamaModel, m.name || m.model || '')
+                            )?.name
+                          }
+                        </code>
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-amber-800 flex items-center gap-1 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-md">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                      <span>
+                        Model "{formData.ollamaModel}" not found in local Ollama library. Run{' '}
+                        <code>ollama pull {formData.ollamaModel}</code> or choose an installed model below.
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Quick model preset chips */}
               <div className="flex items-center gap-1.5 flex-wrap pt-1">
                 <span className="text-[11px] text-[#5c806f]">Presets:</span>
-                {COMMON_MODELS.map((modelName) => (
-                  <button
-                    key={modelName}
-                    type="button"
-                    onClick={() => handleFieldChange('ollamaModel', modelName)}
-                    className={`px-2 py-0.5 rounded text-[11px] transition ${
-                      formData.ollamaModel === modelName
-                        ? 'bg-[#1b5e46] text-white font-medium shadow-sm'
-                        : 'bg-[#f0f5f2] text-[#486657] hover:text-[#0f291e] border border-[#dce7e1]'
-                    }`}
-                  >
-                    {modelName}
-                  </button>
-                ))}
+                {COMMON_MODELS.map((modelName) => {
+                  const isInstalled = discoveredModels.some((m) =>
+                    matchesModelName(modelName, m.name || m.model || '')
+                  );
+                  const isSelected = matchesModelName(formData.ollamaModel, modelName);
+                  return (
+                    <button
+                      key={modelName}
+                      type="button"
+                      onClick={() => {
+                        const matched = discoveredModels.find((m) =>
+                          matchesModelName(modelName, m.name || m.model || '')
+                        );
+                        handleFieldChange('ollamaModel', matched ? matched.name : modelName);
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] transition flex items-center gap-1 ${
+                        isSelected
+                          ? 'bg-[#1b5e46] text-white font-medium shadow-sm'
+                          : 'bg-[#f0f5f2] text-[#486657] hover:text-[#0f291e] border border-[#dce7e1]'
+                      }`}
+                    >
+                      <span>{modelName}</span>
+                      {isInstalled && (
+                        <span
+                          className={`text-[9px] px-1 rounded font-medium ${
+                            isSelected ? 'bg-emerald-800 text-white' : 'bg-emerald-100 text-emerald-800'
+                          }`}
+                        >
+                          installed
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Live Installed Ollama Models List */}
+              {discoveredModels.length > 0 && (
+                <div className="pt-2 border-t border-[#e2ede5] space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-[#1b5e46]">
+                      Installed Ollama Library Models ({discoveredModels.length}):
+                    </span>
+                    <span className="text-[10px] text-[#5c806f]">
+                      Click to select
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {discoveredModels.map((m) => {
+                      const isSelected = matchesModelName(formData.ollamaModel, m.name || m.model || '');
+                      return (
+                        <button
+                          key={m.name}
+                          type="button"
+                          onClick={() => handleFieldChange('ollamaModel', m.name)}
+                          className={`px-2 py-1 rounded text-xs font-mono transition flex items-center gap-1 ${
+                            isSelected
+                              ? 'bg-[#1b5e46] text-white font-bold shadow-xs'
+                              : 'bg-white border border-[#bcdbc8] text-[#1b5e46] hover:bg-[#eef6f1]'
+                          }`}
+                        >
+                          {isSelected && <CheckCircle2 className="h-3 w-3" />}
+                          <span>{m.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -378,20 +482,24 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     Discovered Installed Models ({discoveredModels.length}):
                   </span>
                   <div className="flex flex-wrap gap-1.5">
-                    {discoveredModels.map((m) => (
-                      <button
-                        key={m.name}
-                        type="button"
-                        onClick={() => handleFieldChange('ollamaModel', m.name)}
-                        className={`px-2 py-1 rounded text-xs font-mono transition ${
-                          formData.ollamaModel === m.name
-                            ? 'bg-[#1b5e46] text-white font-bold'
-                            : 'bg-white border border-[#bcdbc8] text-[#1b5e46] hover:bg-[#eef6f1]'
-                        }`}
-                      >
-                        {m.name}
-                      </button>
-                    ))}
+                    {discoveredModels.map((m) => {
+                      const isSelected = matchesModelName(formData.ollamaModel, m.name || m.model || '');
+                      return (
+                        <button
+                          key={m.name}
+                          type="button"
+                          onClick={() => handleFieldChange('ollamaModel', m.name)}
+                          className={`px-2 py-1 rounded text-xs font-mono transition flex items-center gap-1 ${
+                            isSelected
+                              ? 'bg-[#1b5e46] text-white font-bold'
+                              : 'bg-white border border-[#bcdbc8] text-[#1b5e46] hover:bg-[#eef6f1]'
+                          }`}
+                        >
+                          {isSelected && <CheckCircle2 className="h-3 w-3" />}
+                          <span>{m.name}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}

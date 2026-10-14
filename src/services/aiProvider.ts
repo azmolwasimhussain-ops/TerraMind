@@ -1,6 +1,12 @@
 import { MissionGeneratorParams, OutdoorMission } from '../types/mission';
 import { AppSettings } from '../types/settings';
-import { generateMissionWithOllama, OllamaError } from './ollamaClient';
+import {
+  generateMissionWithOllama,
+  fetchOllamaModels,
+  matchesModelName,
+  resolveActualModelName,
+  OllamaError,
+} from './ollamaClient';
 import { generateHeuristicMission } from './botanicalEngine';
 
 export interface GenerationResult {
@@ -29,22 +35,55 @@ export async function generateMission(
     };
   }
 
-  // Otherwise, use genuine local Ollama
+  // Determine actual model name from Ollama tags if available
+  let effectiveModel = settings.ollamaModel;
+  try {
+    const installed = await fetchOllamaModels(
+      settings.ollamaBaseUrl,
+      settings.connectionMode
+    );
+
+    if (installed && installed.length > 0) {
+      const match = installed.find((m) =>
+        matchesModelName(settings.ollamaModel, m.name || m.model || '')
+      );
+
+      if (match) {
+        effectiveModel = match.name || match.model || settings.ollamaModel;
+      } else {
+        // Model is not among installed models
+        const availableNames = installed.map((m) => m.name || m.model).filter(Boolean).join(', ');
+        throw new OllamaError(
+          `Model "${settings.ollamaModel}" not found in Ollama library.`,
+          'MODEL_NOT_FOUND',
+          `Run \`ollama pull ${settings.ollamaModel}\` in your terminal to download this model, or choose an installed model (${availableNames}) in Settings.`
+        );
+      }
+    }
+  } catch (err) {
+    if (err instanceof OllamaError) {
+      throw err;
+    }
+    // If tags check failed (e.g. network error / daemon offline), proceed to generate call
+    // which will produce the proper UNREACHABLE diagnostic.
+  }
+
+  // Otherwise, use genuine local Ollama with resolved actual model name
   try {
     const mission = await generateMissionWithOllama(
       params,
       settings.ollamaBaseUrl,
-      settings.ollamaModel,
+      effectiveModel,
       settings.connectionMode
     );
 
     return {
       mission,
       source: 'ollama',
-      modelUsed: `Ollama (${settings.ollamaModel})`,
+      modelUsed: mission.modelUsed || `Ollama (${effectiveModel})`,
     };
   } catch (err) {
-    // Re-throw so the UI can accurately present the error and ask user if they want offline fallback
+    // Re-throw so the UI can accurately present the error and offer offline fallback
     throw err;
   }
 }

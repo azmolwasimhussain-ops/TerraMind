@@ -89,6 +89,7 @@ export default function App() {
         {currentRoute === 'active_mission' && activeMission && (
           <MissionActivePage
             mission={activeMission}
+            initialSoundEnabled={settings.screenFreeVoiceChime}
             onExit={handleExitActiveMission}
             onOpenJournalWithMission={handleOpenJournalWithMission}
           />

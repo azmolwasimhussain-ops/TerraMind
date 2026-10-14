@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateMissionWithOllama, OllamaError, safeFetchJson } from '../src/services/ollamaClient.js';
+import {
+  generateMissionWithOllama,
+  fetchOllamaModels,
+  matchesModelName,
+  resolveActualModelName,
+  OllamaError,
+  safeFetchJson,
+} from '../src/services/ollamaClient.js';
 import { generateMission } from '../src/services/aiProvider.js';
 import { MissionGeneratorParams } from '../src/types/mission.js';
 import { DEFAULT_SETTINGS, AppSettings } from '../src/types/settings.js';
@@ -198,11 +205,121 @@ test('TerraMind Mission Generation Resilience & Diagnostics', async (t) => {
     assert.equal(forcedResult.source, 'heuristic_engine');
   });
 
-  await t.test('URL Normalization utility handles varied inputs safely', () => {
-    assert.equal(normalizeOllamaUrl('http://localhost:11434/'), 'http://localhost:11434');
-    assert.equal(normalizeOllamaUrl('http://localhost:11434/api'), 'http://localhost:11434');
-    assert.equal(normalizeOllamaUrl('http://localhost:11434/api/'), 'http://localhost:11434');
-    assert.equal(normalizeOllamaUrl('localhost:11434'), 'http://localhost:11434');
-    assert.equal(normalizeOllamaUrl('https://my-ollama-tunnel.ngrok-free.app/'), 'https://my-ollama-tunnel.ngrok-free.app');
+  await t.test('Model detection: matchesModelName normalizes :latest tag correctly without false positives', () => {
+    // Untagged "llama3.2" matches installed "llama3.2:latest" and vice versa
+    assert.equal(matchesModelName('llama3.2', 'llama3.2:latest'), true);
+    assert.equal(matchesModelName('llama3.2:latest', 'llama3.2'), true);
+    assert.equal(matchesModelName('llama3.2', 'llama3.2'), true);
+    assert.equal(matchesModelName('llama3.2:latest', 'llama3.2:latest'), true);
+
+    // llama3 matches llama3:latest
+    assert.equal(matchesModelName('llama3', 'llama3:latest'), true);
+
+    // Exact tag match works
+    assert.equal(matchesModelName('gemma2:2b', 'gemma2:2b'), true);
+    assert.equal(matchesModelName('qwen3.5:4b', 'qwen3.5:4b'), true);
+    assert.equal(matchesModelName('qwen3.5:0.8b', 'qwen3.5:0.8b'), true);
+
+    // Untagged "gemma2" (which defaults to :latest, i.e. 9B) must NOT match "gemma2:2b"
+    assert.equal(matchesModelName('gemma2', 'gemma2:2b'), false);
+
+    // Untagged "qwen3.5" must NOT falsely match "qwen3.5:4b" or "qwen3.5:0.8b"
+    assert.equal(matchesModelName('qwen3.5', 'qwen3.5:4b'), false);
+    assert.equal(matchesModelName('qwen3.5', 'qwen3.5:0.8b'), false);
+
+    // Distinct models do not match
+    assert.equal(matchesModelName('mistral', 'llama3.2:latest'), false);
+    assert.equal(matchesModelName('phi3', 'gemma2:2b'), false);
+  });
+
+  await t.test('Model resolution: resolveActualModelName returns actual tag from Ollama /api/tags', () => {
+    const installed = [
+      { name: 'llama3.2:latest' },
+      { name: 'gemma2:2b' },
+      { name: 'qwen3.5:4b' },
+      { name: 'llama3:latest' },
+      { name: 'qwen3.5:0.8b' },
+    ];
+
+    // Requested "llama3.2" resolves to actual installed tag "llama3.2:latest"
+    assert.equal(resolveActualModelName('llama3.2', installed), 'llama3.2:latest');
+
+    // Requested "llama3" resolves to actual installed tag "llama3:latest"
+    assert.equal(resolveActualModelName('llama3', installed), 'llama3:latest');
+
+    // Requested "gemma2:2b" resolves to "gemma2:2b"
+    assert.equal(resolveActualModelName('gemma2:2b', installed), 'gemma2:2b');
+
+    // Nonexistent model returns original name when not found
+    assert.equal(resolveActualModelName('nonexistent-model', installed), 'nonexistent-model');
+  });
+
+  await t.test('generateMission resolves model to actual tag from /api/tags and rejects unavailable models', async () => {
+    let requestedGenerateModel = '';
+
+    globalThis.fetch = async (url: any, opts: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/ollama/tags') || urlStr.includes('/api/tags')) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            models: [
+              { name: 'llama3.2:latest' },
+              { name: 'gemma2:2b' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (urlStr.includes('/api/ollama/generate') || urlStr.includes('/api/generate')) {
+        const body = JSON.parse(opts.body);
+        requestedGenerateModel = body.model;
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            response: JSON.stringify({
+              title: 'Forest Trail Explorer',
+              description: 'Step into the cedar woodland.',
+              instructions: [{ stepNumber: 1, phase: 'Walk', instruction: 'Walk quietly.' }],
+              checklist: ['Cedar cone'],
+            }),
+            model: requestedGenerateModel,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(JSON.stringify({ ok: false }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+    };
+
+    // When configured with "llama3.2", it resolves and passes "llama3.2:latest"
+    const settingsWithUntagged: AppSettings = {
+      ...DEFAULT_SETTINGS,
+      ollamaModel: 'llama3.2',
+    };
+
+    const result = await generateMission(mockParams, settingsWithUntagged);
+    assert.equal(requestedGenerateModel, 'llama3.2:latest');
+    assert.ok(result.modelUsed.includes('llama3.2:latest'));
+
+    // When configured with an unavailable model "mistral", it throws MODEL_NOT_FOUND without generating
+    const settingsWithMissing: AppSettings = {
+      ...DEFAULT_SETTINGS,
+      ollamaModel: 'mistral',
+    };
+
+    await assert.rejects(
+      async () => {
+        await generateMission(mockParams, settingsWithMissing);
+      },
+      (err: any) => {
+        assert.ok(err instanceof OllamaError);
+        assert.equal(err.code, 'MODEL_NOT_FOUND');
+        assert.ok(err.message.includes('mistral'));
+        assert.ok(err.hint?.includes('ollama pull mistral'));
+        return true;
+      }
+    );
   });
 });

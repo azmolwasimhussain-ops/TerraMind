@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Clock,
   Compass,
@@ -26,7 +26,11 @@ import {
 import { AppSettings } from '../types/settings';
 import { generateMission } from '../services/aiProvider';
 import { saveMission } from '../db/indexedDb';
-import { OllamaError } from '../services/ollamaClient';
+import {
+  OllamaError,
+  fetchOllamaModels,
+  matchesModelName,
+} from '../services/ollamaClient';
 import { getAppEnvironment } from '../services/environment';
 
 const AVAILABLE_INTERESTS: { id: NatureInterest; label: string; icon: string }[] = [
@@ -74,6 +78,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
 
   // Status State
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [activeModelName, setActiveModelName] = useState<string>(settings.ollamaModel);
   const [error, setError] = useState<{
     message: string;
     hint?: string;
@@ -81,6 +86,27 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
     preview?: string;
   } | null>(null);
   const [generatedMission, setGeneratedMission] = useState<OutdoorMission | null>(null);
+
+  // Refresh active model identification when settings or availability change
+  useEffect(() => {
+    let isMounted = true;
+    if (settings.connectionMode !== 'offline_demo') {
+      fetchOllamaModels(settings.ollamaBaseUrl, settings.connectionMode)
+        .then((models) => {
+          if (!isMounted || models.length === 0) return;
+          const match = models.find((m) =>
+            matchesModelName(settings.ollamaModel, m.name || m.model || '')
+          );
+          if (match) {
+            setActiveModelName(match.name || match.model || settings.ollamaModel);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [settings.ollamaBaseUrl, settings.ollamaModel, settings.connectionMode]);
 
   const toggleInterest = (interest: NatureInterest) => {
     setSelectedInterests((prev) => {
@@ -174,7 +200,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
               <span className="text-xs font-semibold text-[#0f291e]">
                 {useOfflineEngineOverride
                   ? 'Offline Botanical Engine Active'
-                  : `Local Ollama AI Active (${settings.ollamaModel})`}
+                  : `Local Ollama AI Active (${activeModelName})`}
               </span>
               <span
                 className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
@@ -402,6 +428,15 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
               <div className="pt-2 border-t border-amber-200 flex flex-col gap-2">
                 <button
                   type="button"
+                  onClick={() => handleGenerate(false)}
+                  className="w-full text-center rounded-xl bg-amber-600/90 py-2.5 text-xs font-semibold text-white hover:bg-amber-700 transition shadow-xs flex items-center justify-center gap-1.5"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Retry with Local Ollama</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => handleGenerate(true)}
                   className="w-full text-center rounded-xl bg-[#1b5e46] py-3 text-xs font-bold text-white hover:bg-[#134835] transition shadow-sm flex items-center justify-center gap-1.5"
                 >
@@ -414,7 +449,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({
                   onClick={() => onNavigate('settings')}
                   className="text-xs text-center text-[#4c6b5d] hover:text-[#0f291e] underline transition py-1"
                 >
-                  Configure Remote Ollama URL in Settings
+                  Open Settings to Choose Installed Model or Connection Mode
                 </button>
               </div>
             </div>

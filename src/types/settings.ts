@@ -2,6 +2,7 @@ export type OllamaConnectionMode = 'proxy' | 'direct' | 'offline_demo';
 
 export interface OllamaModelInfo {
   name: string;
+  model?: string;
   modified_at?: string;
   size?: number;
   digest?: string;

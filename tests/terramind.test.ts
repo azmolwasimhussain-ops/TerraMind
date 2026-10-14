@@ -120,6 +120,20 @@ test('TerraMind Test Suite: Local Storage & Persistence Operations', async (t) =
     const entries = await getAllJournalEntries();
     assert.ok(entries.some((e) => e.id === 'journal_test_1'));
 
+    // Update existing entry with preserved date
+    const originalDate = entry.date;
+    const updatedEntry: JournalEntry = {
+      ...entry,
+      title: 'Solitary Fern Valley (Revised)',
+      content: 'Updated observation: spotted maidenhair ferns along rock face.',
+      updatedAt: new Date(Date.now() + 5000).toISOString(),
+    };
+    await saveJournalEntry(updatedEntry);
+    const updatedList = await getAllJournalEntries();
+    const retrieved = updatedList.find((e) => e.id === 'journal_test_1');
+    assert.equal(retrieved?.title, 'Solitary Fern Valley (Revised)');
+    assert.equal(retrieved?.date, originalDate, 'Original observation date must be preserved');
+
     await deleteJournalEntry('journal_test_1');
     const remaining = await getAllJournalEntries();
     assert.ok(!remaining.some((e) => e.id === 'journal_test_1'));

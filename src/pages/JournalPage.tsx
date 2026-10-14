@@ -170,20 +170,19 @@ export const JournalPage: React.FC<JournalPageProps> = ({
     }
 
     const now = new Date().toISOString();
+    const existingEntry = editingEntryId ? entries.find((item) => item.id === editingEntryId) : undefined;
     const entry: JournalEntry = {
       id: editingEntryId || `entry_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       title: formTitle.trim() || undefined,
       content: trimmed,
       mood: formMood,
       categories: formCategories.length > 0 ? formCategories : ['Sensory'],
-      date: now,
+      date: existingEntry?.date || now,
       locationName: formLocation.trim() || undefined,
       weatherNotes: formWeather.trim() || undefined,
       missionId: formMissionId,
       missionTitle: formMissionTitle,
-      createdAt: editingEntryId
-        ? entries.find((item) => item.id === editingEntryId)?.createdAt || now
-        : now,
+      createdAt: existingEntry?.createdAt || now,
       updatedAt: now,
     };
 
@@ -509,7 +508,7 @@ export const JournalPage: React.FC<JournalPageProps> = ({
                 <div className="flex items-center gap-2 text-xs text-[#527364]">
                   <span>
                     {MOODS.find((m) => m.mood === selectedEntryForDetail.mood)?.icon}{' '}
-                    {selectedEntryForDetail.mood}
+                    {MOODS.find((m) => m.mood === selectedEntryForDetail.mood)?.label || selectedEntryForDetail.mood}
                   </span>
                   <span aria-hidden="true">·</span>
                   <time dateTime={selectedEntryForDetail.date}>

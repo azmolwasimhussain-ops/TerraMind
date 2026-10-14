@@ -223,6 +223,41 @@ export async function fetchOllamaModels(
 }
 
 /**
+ * Check if a requested model identifier matches an installed model from Ollama tags.
+ * Normalizes tags so that e.g. "llama3.2" matches "llama3.2:latest" and vice versa,
+ * while ensuring distinct tags (e.g. "gemma2:2b" vs "gemma2", "qwen3.5:4b" vs "qwen3.5")
+ * are not falsely matched.
+ */
+export function matchesModelName(requested: string, installedName: string): boolean {
+  const req = (requested || '').trim().toLowerCase();
+  const inst = (installedName || '').trim().toLowerCase();
+  if (!req || !inst) return false;
+
+  // Exact string match
+  if (req === inst) return true;
+
+  // Ollama default tag normalization: untagged model defaults to :latest
+  const reqWithLatest = req.includes(':') ? req : `${req}:latest`;
+  const instWithLatest = inst.includes(':') ? inst : `${inst}:latest`;
+
+  return reqWithLatest === instWithLatest;
+}
+
+/**
+ * Resolves a requested model name against the list of installed models from Ollama /api/tags.
+ * Returns the exact installed model tag name (e.g. 'llama3.2:latest') if matched,
+ * or the original requested model name if not found.
+ */
+export function resolveActualModelName(
+  requested: string,
+  installedModels: OllamaModelInfo[]
+): string {
+  if (!installedModels || installedModels.length === 0) return requested;
+  const match = installedModels.find((m) => matchesModelName(requested, m.name || m.model || ''));
+  return match ? (match.name || match.model || requested) : requested;
+}
+
+/**
  * Generate structured mission using Ollama /api/generate or /api/chat
  */
 export async function generateMissionWithOllama(
@@ -299,7 +334,7 @@ You must return valid JSON with this exact structure:
     throw new OllamaError(
       err.message || 'Unable to connect to Ollama server.',
       'UNREACHABLE',
-      'Check if Ollama is running with `ollama serve` or use the built-in Offline Botanical Engine.'
+      'Check if Ollama is running in the background (`ollama serve &` or open the Ollama macOS app), or use the built-in Offline Botanical Engine.'
     );
   } finally {
     clearTimeout(timeout);
@@ -336,7 +371,7 @@ You must return valid JSON with this exact structure:
     throw new OllamaError(
       errorMsg,
       'UNREACHABLE',
-      errData.hint || 'Verify your Ollama server is running and accessible.'
+      errData.hint || `Verify your Ollama server is running in the background and accessible at ${cleanUrl}.`
     );
   }
 

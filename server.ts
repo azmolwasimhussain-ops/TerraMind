@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -105,7 +106,9 @@ async function handleVersion(req: express.Request, res: express.Response) {
         ? `Connection refused at ${targetUrl}. Ollama is not running on this host.`
         : (err.message || 'Unable to connect to Ollama service'),
       url: targetUrl,
-      hint: 'Ensure Ollama is running (`ollama serve`) and accessible at ' + targetUrl,
+      hint: isConnRefused
+        ? 'Ollama is not running. On macOS, keep `ollama serve` active in a separate terminal tab or start the Ollama desktop app (`open -a Ollama`).'
+        : 'Ensure Ollama is running and accessible at ' + targetUrl,
     });
   }
 }
@@ -169,6 +172,41 @@ async function handleTags(req: express.Request, res: express.Response) {
 app.get('/api/ollama/tags', handleTags);
 app.get('/api/tags', handleTags);
 
+function matchesModelName(requested: string, installedName: string): boolean {
+  const req = (requested || '').trim().toLowerCase();
+  const inst = (installedName || '').trim().toLowerCase();
+  if (!req || !inst) return false;
+  if (req === inst) return true;
+  const reqWithLatest = req.includes(':') ? req : `${req}:latest`;
+  const instWithLatest = inst.includes(':') ? inst : `${inst}:latest`;
+  return reqWithLatest === instWithLatest;
+}
+
+async function resolveInstalledModel(targetUrl: string, requestedModel: string): Promise<string> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(`${targetUrl}/api/tags`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (response.ok) {
+      const data = await response.json();
+      const models = data.models || [];
+      const match = models.find((m: any) =>
+        matchesModelName(requestedModel, m.name || m.model || '')
+      );
+      if (match) {
+        return match.name || match.model || requestedModel;
+      }
+    }
+  } catch {
+    // If tags query fails, fallback to requested model
+  }
+  return requestedModel;
+}
+
 // Handler for Ollama Generate proxy
 async function handleGenerate(req: express.Request, res: express.Response) {
   const targetUrl = getTargetOllamaUrl(req);
@@ -178,6 +216,8 @@ async function handleGenerate(req: express.Request, res: express.Response) {
     return res.status(400).json({ ok: false, error: 'Prompt is required' });
   }
 
+  const actualModel = await resolveInstalledModel(targetUrl, model);
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60000); // 60s max for local LLM
@@ -186,7 +226,7 @@ async function handleGenerate(req: express.Request, res: express.Response) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model,
+        model: actualModel,
         prompt,
         system,
         stream: false,
@@ -250,7 +290,9 @@ async function handleGenerate(req: express.Request, res: express.Response) {
         : isConnRefused
         ? `Could not reach Ollama at ${targetUrl}. Is the service running?`
         : (err.message || 'Generation failed'),
-      hint: 'Ensure Ollama is running (`ollama serve`) and the model is pulled.',
+      hint: isConnRefused
+        ? 'Ollama is not running. On macOS, keep `ollama serve` active in a separate terminal tab or start the Ollama desktop app (`open -a Ollama`).'
+        : 'Ensure Ollama is running and the model is pulled.',
     });
   }
 }
@@ -267,6 +309,8 @@ async function handleChat(req: express.Request, res: express.Response) {
     return res.status(400).json({ ok: false, error: 'Messages array is required' });
   }
 
+  const actualModel = await resolveInstalledModel(targetUrl, model);
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60000);
@@ -275,7 +319,7 @@ async function handleChat(req: express.Request, res: express.Response) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model,
+        model: actualModel,
         messages,
         stream: false,
         format,

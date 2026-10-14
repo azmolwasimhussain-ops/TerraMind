@@ -22,12 +22,14 @@ import {
 
 interface MissionActivePageProps {
   mission: OutdoorMission;
+  initialSoundEnabled?: boolean;
   onExit: () => void;
   onOpenJournalWithMission: (mission: OutdoorMission) => void;
 }
 
 export const MissionActivePage: React.FC<MissionActivePageProps> = ({
   mission: initialMission,
+  initialSoundEnabled = true,
   onExit,
   onOpenJournalWithMission,
 }) => {
@@ -35,8 +37,19 @@ export const MissionActivePage: React.FC<MissionActivePageProps> = ({
   const [isCompletedModalOpen, setIsCompletedModalOpen] = useState(false);
   const [isExitModalOpen, setIsExitModalOpen] = useState(false);
   const [activeStepTab, setActiveStepTab] = useState<number>(0);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(initialSoundEnabled);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Reusable audio context ref to prevent resource leaks
+  const audioContextRef = React.useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(() => {});
+      }
+    };
+  }, []);
 
   // Outdoor session timer
   useEffect(() => {
@@ -65,11 +78,22 @@ export const MissionActivePage: React.FC<MissionActivePageProps> = ({
   const totalCount = mission.checklist.length;
   const isAllChecklistDone = totalCount > 0 && completedCount === totalCount;
 
-  // Gentle audio chime for completing checklist items
+  // Gentle audio chime for completing checklist items (reusing audio context)
   const playChime = () => {
     if (!soundEnabled) return;
     try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtxClass) return;
+
+      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        audioContextRef.current = new AudioCtxClass();
+      }
+
+      const audioCtx = audioContextRef.current;
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.type = 'sine';
@@ -82,7 +106,7 @@ export const MissionActivePage: React.FC<MissionActivePageProps> = ({
       osc.start();
       osc.stop(audioCtx.currentTime + 0.45);
     } catch {
-      // Audio context may be restricted without gesture
+      // Audio context may be restricted without user gesture
     }
   };
 
@@ -384,8 +408,8 @@ export const MissionActivePage: React.FC<MissionActivePageProps> = ({
             onClick={handleCompleteMission}
             className={`w-full sm:flex-1 flex items-center justify-center gap-2 rounded-xl py-4 text-base font-bold transition shadow-sm active:scale-[0.98] ${
               isAllChecklistDone || mission.status === 'completed'
-                ? 'bg-[#1b5e46] text-white hover:bg-[#134835]'
-                : 'bg-[#1b5e46] text-white hover:bg-[#134835]'
+                ? 'bg-[#1b5e46] text-white hover:bg-[#134835] shadow-md shadow-[#1b5e46]/20'
+                : 'border-2 border-[#1b5e46] bg-white text-[#1b5e46] hover:bg-[#eef6f1]'
             }`}
           >
             <CheckCircle2 className="h-5 w-5" />
